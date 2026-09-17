@@ -28,14 +28,25 @@ jobs:
       - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android tools
+      - name: Accept Android SDK licenses
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses
 
-      - name: Install dependencies
+      - name: Install Android SDK tools
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Verify Android SDK
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          sdkmanager --list | head -50
+          find "$ANDROID_HOME" -name aidl -type f -print
+
+      - name: Install Buildozer
         run: |
           python -m pip install --upgrade pip
           python -m pip install buildozer==1.6.0
@@ -44,8 +55,15 @@ jobs:
         run: |
           buildozer android debug
 
+      - name: Show APK
+        if: always()
+        run: |
+          echo "APK files:"
+          find bin -maxdepth 1 -type f -name "*.apk" -print 2>/dev/null || true
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: rasta-studio-apk-proof
           path: bin/*.apk
+          if-no-files-found: error
