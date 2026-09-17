@@ -1,4 +1,4 @@
-name: Rasta Studio APK Proof
+name: Rasta Studio Build Diagnostics
 
 on:
   workflow_dispatch:
@@ -10,108 +10,276 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
+  diagnose:
+    runs-on: ubuntu-22.04
 
     env:
       ANDROID_API: "35"
       ANDROID_BUILD_TOOLS: "35.0.0"
-      PIP_DISABLE_PIP_VERSION_CHECK: "1"
-      PIP_NO_INPUT: "1"
 
     steps:
-      - name: Checkout source
+
+      # 1. بررسی سیستم
+      - name: 01 - System Check
+        run: |
+          set -eux
+
+          echo "===== OS ====="
+          cat /etc/os-release
+
+          echo "===== CPU ====="
+          uname -a
+
+          echo "===== DISK ====="
+          df -h
+
+      # 2. دریافت پروژه
+      - name: 02 - Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
-        uses: actions/setup-java@v4
+      # 3. بررسی فایل‌های پروژه
+      - name: 03 - Project Files Check
+        run: |
+          set -eux
+
+          echo "===== CURRENT DIRECTORY ====="
+          pwd
+
+          echo "===== FILES ====="
+          find . -maxdepth 3 -type f | sort
+
+          echo "===== main.py ====="
+          test -f main.py
+          sed -n '1,200p' main.py
+
+          echo "===== buildozer.spec ====="
+          test -f buildozer.spec
+          sed -n '1,240p' buildozer.spec
+
+      # 4. Java
+      - name: 04 - Java 17 Check
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Python 3.11
+      - name: 05 - Verify Java
+        run: |
+          set -eux
+
+          echo "===== JAVA ====="
+          java -version
+
+          echo "===== JAVAC ====="
+          javac -version
+
+          echo "===== JAVA_HOME ====="
+          echo "$JAVA_HOME"
+
+      # 5. Python
+      - name: 06 - Python 3.11 Check
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
-      - name: Set up Android SDK
+      - name: 07 - Verify Python
+        run: |
+          set -eux
+
+          python --version
+          python -m pip --version
+
+      # 6. Android SDK
+      - name: 08 - Android SDK Setup
         uses: android-actions/setup-android@v3
 
-      - name: Prepare Android SDK
-        shell: bash
+      - name: 09 - Android SDK Environment
         run: |
-          set -e
+          set -eux
 
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          echo "===== SDK DIRECTORY ====="
+          ls -lah "$ANDROID_HOME"
 
-          if [ ! -x "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found."
-            exit 1
-          fi
+          echo "===== SDKMANAGER ====="
+          which sdkmanager
+          sdkmanager --version
 
-          echo "Accepting Android SDK licenses..."
+      # 7. Licenses
+      - name: 10 - Android License Check
+        run: |
+          set -eux
 
-          yes | "$SDKMANAGER" --licenses > /tmp/sdk-licenses.log 2>&1 || true
+          echo "===== ACCEPTING LICENSES ====="
 
-          echo "Installing required Android components..."
+          yes | sdkmanager --licenses || true
 
-          "$SDKMANAGER" \
+          echo "===== LICENSE FILES ====="
+
+          find "$ANDROID_HOME/licenses" -type f -maxdepth 1 -print 2>/dev/null || true
+
+      # 8. Android packages
+      - name: 11 - Install Android Packages
+        run: |
+          set -eux
+
+          sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
             "build-tools;${ANDROID_BUILD_TOOLS}"
 
-          echo "Android SDK packages:"
-          "$SDKMANAGER" --list_installed || true
-
-      - name: Verify AIDL
-        shell: bash
+      # 9. بررسی واقعی SDK
+      - name: 12 - Verify Android Packages
         run: |
-          set -e
+          set -eux
+
+          echo "===== ADB ====="
+          adb version
+
+          echo "===== PLATFORM ====="
+          ls -lah "$ANDROID_HOME/platforms/android-${ANDROID_API}"
+
+          echo "===== BUILD TOOLS ====="
+          ls -lah "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}"
+
+      # 10. بررسی AIDL
+      - name: 13 - AIDL Diagnostic
+        run: |
+          set -eux
+
+          echo "===== SEARCHING FOR AIDL ====="
+
+          find "$ANDROID_HOME" \
+            -type f \
+            -name "aidl" \
+            -print
+
+          echo "===== EXPECTED AIDL ====="
 
           AIDL="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aidl"
 
-          echo "Checking:"
           echo "$AIDL"
 
-          if [ ! -x "$AIDL" ]; then
-            echo "ERROR: AIDL was not installed."
-            find "$ANDROID_HOME" -name aidl -type f -print || true
+          if [ ! -f "$AIDL" ]; then
+            echo ""
+            echo "===================================="
+            echo "AIDL NOT FOUND"
+            echo "===================================="
             exit 1
           fi
 
+          echo ""
+          echo "===================================="
+          echo "AIDL FOUND"
+          echo "===================================="
+
           "$AIDL" --version
 
-      - name: Install Buildozer
+      # 11. Build Tools binaries
+      - name: 14 - Android Build Tools Diagnostic
         run: |
+          set -eux
+
+          BT="$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}"
+
+          echo "===== BUILD TOOLS BINARIES ====="
+
+          for FILE in \
+            aapt \
+            aapt2 \
+            aidl \
+            zipalign \
+            apksigner
+          do
+            echo ""
+            echo "Checking $FILE ..."
+
+            if [ -f "$BT/$FILE" ]; then
+              echo "FOUND: $BT/$FILE"
+            else
+              echo "MISSING: $BT/$FILE"
+              exit 1
+            fi
+          done
+
+      # 12. System dependencies
+      - name: 15 - Install Linux Dependencies
+        run: |
+          set -eux
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            git \
+            zip \
+            unzip \
+            autoconf \
+            libtool \
+            pkg-config \
+            zlib1g-dev \
+            libncurses5-dev \
+            libncursesw5-dev \
+            cmake \
+            libffi-dev \
+            libssl-dev
+
+      # 13. Buildozer installation
+      - name: 16 - Install Buildozer
+        run: |
+          set -eux
+
           python -m pip install --upgrade pip
-          python -m pip install buildozer==1.6.0
 
-      - name: Verify project files
+          python -m pip install \
+            buildozer==1.6.0 \
+            Cython==0.29.36
+
+      # 14. Buildozer diagnostic
+      - name: 17 - Buildozer Check
         run: |
-          test -f main.py
-          test -f buildozer.spec
+          set -eux
 
-          echo "Project files:"
-          ls -lah
+          echo "===== BUILDOZER ====="
 
-      - name: Build Android APK
+          which buildozer
+          buildozer --version
+
+          echo "===== CYTHON ====="
+
+          cython --version
+
+      # 15. Final environment report
+      - name: 18 - Final Environment Report
         run: |
-          buildozer android debug
+          set -eux
 
-      - name: Verify APK
-        run: |
-          echo "Generated APK files:"
-          find bin -maxdepth 1 -type f -name "*.apk" -print
+          echo "===================================="
+          echo "FINAL DIAGNOSTIC REPORT"
+          echo "===================================="
 
-          test -n "$(find bin -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          echo ""
+          echo "JAVA:"
+          java -version
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: rasta-studio-apk-proof
-          path: bin/*.apk
-          if-no-files-found: error
+          echo ""
+          echo "PYTHON:"
+          python --version
+
+          echo ""
+          echo "BUILDOZER:"
+          buildozer --version
+
+          echo ""
+          echo "ANDROID:"
+          adb version
+
+          echo ""
+          echo "AIDL:"
+          "$ANDROID_HOME/build-tools/${ANDROID_BUILD_TOOLS}/aidl" --version
+
+          echo ""
+          echo "===================================="
+          echo "ALL DIAGNOSTIC CHECKS PASSED"
+          echo "===================================="
