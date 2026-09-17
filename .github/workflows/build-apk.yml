@@ -7,62 +7,35 @@ on:
       - main
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Python 3.11
+      - name: Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git \
-            zip \
-            unzip \
-            autoconf \
-            automake \
-            libtool \
-            pkg-config \
-            zlib1g-dev \
-            libncurses5-dev \
-            libncursesw5-dev \
-            cmake \
-            libffi-dev \
-            libssl-dev
-
-      - name: Set up Android SDK
+      - name: Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK components
+      - name: Install Android tools
         run: |
-          sdkmanager --licenses <<< "y" || true
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-35"
+          sdkmanager "build-tools;35.0.0"
+          yes | sdkmanager --licenses || true
 
-      - name: Verify Android SDK tools
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          command -v adb || true
-          find "$ANDROID_HOME" -name aidl -type f -print
-          aidl --version || true
-
-      - name: Install Buildozer
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install buildozer==1.6.0
@@ -71,15 +44,8 @@ jobs:
         run: |
           buildozer android debug
 
-      - name: Show generated files
-        if: always()
-        run: |
-          echo "Contents of bin:"
-          ls -lah bin || true
-
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: rasta-studio-apk-proof
           path: bin/*.apk
-          if-no-files-found: error
